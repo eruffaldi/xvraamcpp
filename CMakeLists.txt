@@ -1,10 +1,8 @@
-
+project(xvraamcpp)
 find_package(Eigen3 REQUIRED)
 find_package(assimp REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 include_directories(${ASSIMP_INCLUDE_DIR})
-message(a ${ASSIMP_INCLUDE_DIR})
-include_directories(/opt/local/include)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++11")
 
 add_executable(parseaam parseaam.cpp aamparse.cpp)
