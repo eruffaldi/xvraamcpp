@@ -38,14 +38,14 @@ T lexical_cast(const std::string& str)
 namespace std
 {
 	template <class T>
-static bool getline2(T & inf, std::string & a)
-{
-	if(!std::getline(inf,a))
-		return false;
-	if(a.size() > 0 && a[a.size()-1] == '\r')
-		 a=a.substr(0,a.size()-1);
-	return true;	
-}
+	static bool getline2(T & inf, std::string & a)
+	{
+		if(!std::getline(inf,a))
+			return false;
+		if(a.size() > 0 && a[a.size()-1] == '\r')
+			 a=a.substr(0,a.size()-1);
+		return true;	
+	}
 }
 
 static bool parseProperty(std::istream& inf,std::string & name, std::string &rest)
@@ -62,15 +62,24 @@ static bool parseProperty(std::istream& inf,std::string & name, std::string &res
 
 aamast::AAMMesh * AAMParser::parse(std::string filename)
 {
+	inf.close();
 	inf.open(filename.c_str(),std::ios::binary);
 	if(!inf)
 		return 0;
+	this->filename = filename;
 	std::string header;
-	std::getline2(inf, header);
-	if(!(header == "AAM_MESH" || header == "AAM_MESH_MULTIFRAME"))
+	while(true)
 	{
-		std::cerr << "expected AAM_MESH or AAM_MESH_MULTIFRAME, got <" << header << ">" << std::endl;
-		return 0;
+		std::getline2(inf, header);
+		if(header == "BINARY")
+			binary = true;
+		else if(!(header == "AAM_MESH" || header == "AAM_MESH_MULTIFRAME"))
+		{
+			std::cerr << filename << ": expected AAM_MESH or AAM_MESH_MULTIFRAME, got <" << header << ">" << std::endl;
+			return 0;
+		}
+		else
+			break;
 	}
 	std::string materials;
 	std::getline2(inf, materials);
@@ -239,6 +248,24 @@ aamast::Material* AAMParser::parseMaterial()
 		}
 		return mat.release();
 	}
+	else if(pclass == "Shell Material")
+	{
+		// NSubs
+		int nsubs;
+		std::string value;
+		std::unique_ptr<aamast::MultiMaterial> mat(new aamast::MultiMaterial());
+		mat->name = pname;
+		mat->materialclass = pclass;
+		aamast::Material* m = parseMaterial();
+		mat->materials.push_back(std::shared_ptr<aamast::Material>(m));
+		parseProperty(inf,name,value);
+		if(name != "}")
+		{
+			std::cout << "expecting } found " <<name << std::endl;
+			return 0;
+		}
+		return mat.release();
+	}
 	else if(pclass == "Standard")
 	{
 		std::unique_ptr<aamast::StandardMaterial> mat(new aamast::StandardMaterial());
@@ -284,7 +311,7 @@ aamast::Material* AAMParser::parseMaterial()
 	}
 	else
 	{
-		std::cerr << "Unknown class in material <" << pclass <<">"<< std::endl;
+		std::cerr << filename << ": unknown class in material <" << pclass <<">"<< std::endl;
 		return 0;
 
 	}
@@ -331,22 +358,46 @@ aamast::AAMObject * AAMParser::parseObject(int oid,std::string xname)
 			std::string pa;
 			int vtxcount = lexical_cast<int>(value);
 			obj->vertices.resize(vtxcount);
-			for(int i = 0; i < vtxcount; i++)
+			if(binary)
 			{
-				getline2(inf,pa);
-				obj->vertices[i] = lexical_cast<Eigen::Vector3f>(pa);
+				for(int i = 0; i < vtxcount; i++)
+				{
+					float data[3];
+					inf.read((char*)&data[0],3*4);
+					obj->vertices[i] = Eigen::Vector3f(data[0],data[1],data[2]);
+				}				
+			}
+			else
+			{
+				for(int i = 0; i < vtxcount; i++)
+				{
+					getline2(inf,pa);
+					obj->vertices[i] = lexical_cast<Eigen::Vector3f>(pa);
+				}
 			}
 			std::cout << "\tV_List done " << " " << obj->vertices.size() << " vertices" << std::endl;
 		}
 		else if(name == "TV_List:")
 		{
-			std::string pa;
-			int tvcount = lexical_cast<int>(value);
-			obj->texturecoordinates.resize(tvcount);
-			for(int i = 0; i < tvcount; i++)
+				int tvcount = lexical_cast<int>(value);
+				obj->texturecoordinates.resize(tvcount);
+			if(binary)
 			{
-				getline2(inf,pa);
-				obj->texturecoordinates[i] = lexical_cast<Eigen::Vector2f>(pa);
+				for(int i = 0; i < tvcount; i++)
+				{
+					float data[2];
+					inf.read((char*)&data[0],2*4);
+					obj->texturecoordinates[i] = Eigen::Vector2f(data[0],data[1]);
+				}				
+			}
+			else
+			{			
+					std::string pa;
+				for(int i = 0; i < tvcount; i++)
+				{
+					getline2(inf,pa);
+					obj->texturecoordinates[i] = lexical_cast<Eigen::Vector2f>(pa);
+				}
 			}
 			std::cout << "\tTV_List done" << " " << obj->texturecoordinates.size() << " tex coordinates" << std::endl;
 		}		
@@ -373,40 +424,87 @@ aamast::AAMObject * AAMParser::parseObject(int oid,std::string xname)
 				group->materialsubidentifier = lexical_cast<int>(value);
 				group->startface = iface+1;
 
-				// Optimization: number of faces in a group cannot be established directly, but we can
-				// store all the faces of a mesh in a single structure and then associate them to the different groups
-				int ti = 0;		
-				int maxti = 0;		
-				while(true)
+				if(!binary)
 				{
-					parseProperty(inf,name,value);
-					if(name == "ENDGROUP")
+					// Optimization: number of faces in a group cannot be established directly, but we can
+					// store all the faces of a mesh in a single structure and then associate them to the different groups
+					int ti = 0;		
+					int maxti = 0;		
+					while(true)
 					{
-						group->count = iface+1-group->startface;
-						group->textureunits = ti;
-						std::cout << "\tENDGROUP " << " matid:" << group->materialsubidentifier << " from:" << group->startface << " to: " << group->startface+group->count-1 <<  " count:" << group->count << " texunits:" << group->textureunits << std::endl;
-						obj->groups.push_back(std::shared_ptr<aamast::AAMGroup>(group.release()));
-						break;
+						parseProperty(inf,name,value);
+						if(name == "ENDGROUP")
+						{
+							group->count = iface+1-group->startface;
+							group->textureunits = ti;
+							std::cout << "\tENDGROUP " << " matid:" << group->materialsubidentifier << " from:" << group->startface << " to: " << group->startface+group->count-1 <<  " count:" << group->count << " texunits:" << group->textureunits << std::endl;
+							obj->groups.push_back(std::shared_ptr<aamast::AAMGroup>(group.release()));
+							break;
+						}
+						else if(name == "I:")
+						{
+							++iface;
+							ti = 0;
+							Eigen::Vector4i q = lexical_cast<Eigen::Vector4i>(value);
+							obj->ivertices[iface] = Eigen::Vector3i(q(0),q(1),q(2));
+							obj->smoothinggroup[iface] = q(3);
+							ti = 0;
+						}
+						else if(name == "TI:")
+						{
+							Eigen::Vector3i q = lexical_cast<Eigen::Vector3i>(value);
+							if(ti >= obj->itexturecoordinates.size())
+								obj->itexturecoordinates.push_back(std::vector<Eigen::Vector3i>(info(0)));
+							obj->itexturecoordinates[ti++][iface] = q;
+						}
 					}
-					else if(name == "I:")
+				}
+					else
 					{
-						++iface;
-						ti = 0;
-						Eigen::Vector4i q = lexical_cast<Eigen::Vector4i>(value);
-						obj->ivertices[iface] = Eigen::Vector3i(q(0),q(1),q(2));
-						obj->smoothinggroup[iface] = q(3);
-						ti = 0;
-					}
-					else if(name == "TI:")
+					int ti = 0;		
+					int maxti = 0;		
+					while(true)
 					{
-						Eigen::Vector3i q = lexical_cast<Eigen::Vector3i>(value);
-						if(ti >= obj->itexturecoordinates.size())
-							obj->itexturecoordinates.push_back(std::vector<Eigen::Vector3i>(info(0)));
-						obj->itexturecoordinates[ti++][iface] = q;
+						inf >> name;
+						if(!inf)
+							break;
+						// needs to eat space after
+						char current;
+						inf.get(current);
+						if(name == "ENDGROUP")
+						{
+							group->count = iface+1-group->startface;
+							group->textureunits = ti;
+							std::cout << "\tENDGROUP " << " matid:" << group->materialsubidentifier << " from:" << group->startface << " to: " << group->startface+group->count-1 <<  " count:" << group->count << " texunits:" << group->textureunits << std::endl;
+							obj->groups.push_back(std::shared_ptr<aamast::AAMGroup>(group.release()));
+							break;
+						}
+						else if(name == "I:")
+						{
+							++iface;
+							ti = 0;
+							int q[4];
+							inf.read((char*)q,4*4);
+							obj->ivertices[iface] = Eigen::Vector3i(q[0],q[1],q[2]);
+							obj->smoothinggroup[iface] = q[3];
+							ti = 0;
+						}
+						else if(name == "TI:")
+						{
+							int q[3];
+							inf.read((char*)q,3*4);
+							if(ti >= obj->itexturecoordinates.size())
+								obj->itexturecoordinates.push_back(std::vector<Eigen::Vector3i>(info(0)));
+							obj->itexturecoordinates[ti++][iface] = Eigen::Vector3i(q[0],q[1],q[2]);
+						}			
+						else 
+						{
+							std::cout << filename << " unknown binary field " << name << std::endl;
+						}		
 					}
 				}
 			}
-			std::cout << "\tdone I_List" << std::endl;
+			std::cout << "\tdone I_List " << iface << std::endl;
 		}
 		else if(name == "}")
 			break;
@@ -479,7 +577,7 @@ bool AAMParser::parseFrame(int no, aamast::AAMMesh * mesh, aamast::AAMFrame * fr
 	parseProperty(inf, name,value);
 	if(name != "{")
 	{
-			std::cerr << "parseFrame unexpected " << name << " " << value << std::endl;
+			std::cerr << filename << ": parseFrame unexpected " << name << " " << value << std::endl;
 			return false;
 	}
 
@@ -514,7 +612,7 @@ bool AAMParser::parseFrame(int no, aamast::AAMMesh * mesh, aamast::AAMFrame * fr
 		}
 		else
 		{
-			std::cerr << "parseFrame unexpected " << name << " " << value << std::endl;
+			std::cerr << filename << ": parseFrame unexpected " << name << " " << value << std::endl;
 			return false;
 		}
 

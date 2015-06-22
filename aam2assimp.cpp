@@ -1,3 +1,8 @@
+/**
+ * Apache License 2.0 - http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Emanuele Ruffaldi 2015
+ */
 #include "aamparse.hpp"
 #include <iostream>
 #include <assimp/scene.h>           // Output data structure
@@ -242,25 +247,70 @@ void convert(aiScene * scene, aamast::AAMMesh * mesh)
 	}
 }
 
+void help()
+{
+	std::cout << "aam2assimp by Emanuele Ruffaldi 2015.\naam2assimp (--help|--formats|--collada|--obj)+ filename*" << std::endl;
+	exit(0);
+}
+
 int main(int argc, char const *argv[])
 {
-	AAMParser parser;
 	Assimp::Exporter e;
+	bool todae = false;
+	bool toobj = false;
 	for(int i = 1; i < argc; i++)
 	{
-		std::cout << "Parsing " << argv[i] << std::endl;
-		aamast::AAMMesh * mesh = parser.parse(argv[i]);
-		std::string outpath = argv[i];
-		outpath += ".dae";
+		if(strcmp(argv[i],"--help") == 0 || strcmp(argv[i],"-h") == 0)
+			help();
+		else if(strcmp(argv[i],"--collada") == 0)
+			todae = true;
+		else if(strcmp(argv[i],"--obj") == 0)
+			toobj = true;
+		else if(strcmp(argv[i],"--formats") == 0)
+		{
+			int n = e.GetExportFormatCount();
+			for(int i = 0; i < n; i++)
+			{
+				auto p = e.GetExportFormatDescription(i);
+				std::cout << " " << p->id << " " << p->description << " " << p->fileExtension << std::endl;
+			}
+		}
+		else
+		{
+			std::cout << "parsing " << argv[i] << std::endl;
+			std::string base = argv[i];
+			AAMParser parser;
+			aamast::AAMMesh * mesh = parser.parse(base);
+			if(!mesh) 
+			{
+				std::cout <<" FAILED\n";
+				continue;
+			}
+			std::string outpath;
 
-		aiScene scene;
-		convert(&scene,mesh);
-		std::cout << "Generate!"<<std::endl;
-		e.Export(&scene,"collada",outpath.c_str());
-		outpath = argv[i];
-		outpath += ".obj";
-		e.Export(&scene,"obj",outpath.c_str());
-		delete mesh;
+			int k = base.rfind('.');
+			if(k > 0)
+				base = base.substr(0,k);
+
+			aiScene scene;
+			convert(&scene,mesh);
+
+			if(todae)
+			{
+				outpath = base;
+				outpath += ".dae";
+				std::cout << "Generate: "<< outpath << std::endl;
+				e.Export(&scene,"collada",outpath.c_str());
+			}
+			if(toobj)
+			{
+				outpath = base;
+				outpath += ".obj";
+				std::cout << "Generate: "<< outpath << std::endl;
+				e.Export(&scene,"obj",outpath.c_str());
+			}
+			delete mesh;
+		}
 	}
 	return 0;
 }

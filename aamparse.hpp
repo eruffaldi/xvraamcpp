@@ -9,6 +9,8 @@ public:
 	aamast::AAMMesh * parse(std::string filename);
 
 protected:
+	bool binary = false;
+	std::string filename;
 	void doError(std::string text);
 
 	aamast::Material* parseMaterial();
