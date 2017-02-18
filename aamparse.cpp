@@ -266,7 +266,7 @@ aamast::Material* AAMParser::parseMaterial()
 		}
 		return mat.release();
 	}
-	else if(pclass == "Standard")
+	else if(pclass == "Standard" || pclass == "Color")
 	{
 		std::unique_ptr<aamast::StandardMaterial> mat(new aamast::StandardMaterial());
 		mat->name = pname;
@@ -311,7 +311,7 @@ aamast::Material* AAMParser::parseMaterial()
 	}
 	else
 	{
-		std::cerr << filename << ": unknown class in material <" << pclass <<">"<< std::endl;
+		std::cerr << filename << ": unknown class in material: " << pclass << std::endl;
 		return 0;
 
 	}
